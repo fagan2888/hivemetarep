@@ -19,9 +19,11 @@ import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
 import org.apache.hadoop.hive.metastore.api.Database;
+import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.InvalidObjectException;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
+import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.security.UserGroupInformation;
@@ -214,6 +216,8 @@ public class HiveMetaLoad {
 	public static void syncOp() {
 		List<Database> ldatabases = new ArrayList<Database>();
 		List<Table> ltables = new ArrayList<Table>();
+		List<Partition> lparts = new ArrayList<Partition>();
+
 		try {
 			HiveMetaStoreClient lmsc = new HiveMetaStoreClient(localHConf);
 
@@ -252,12 +256,15 @@ public class HiveMetaLoad {
 				List<String> ltableList;
 				Database ldb = lmsc.getDatabase(db);
 				StorageDescriptor lsd = null;
+				StorageDescriptor psd = null;
+
 				if (ldb.getLocationUri().contains("hdfs://" + local_clusterName)) {
 					ldb.setLocationUri(ldb.getLocationUri().replace(local_clusterName, remote_clusterName));
 				}
 				ldatabases.add(ldb);
 				ltableList = lmsc.getAllTables(db);
 				if (singleTb) {
+					ArrayList<String> partKeyList = new ArrayList<String>();
 					Table ltb = lmsc.getTable(db, table);
 					lsd = ltb.getSd();
 					if (lsd.getLocation().contains("hdfs://" + local_clusterName)) {
@@ -265,8 +272,22 @@ public class HiveMetaLoad {
 						ltb.setSd(lsd);
 					}
 					ltables.add(ltb);
+					List<FieldSchema> partKeys = ltb.getPartitionKeys();
+					for (FieldSchema partKey : partKeys) {
+						partKeyList.add(partKey.getName());
+					}
+					List<Partition> parts = lmsc.getPartitionsByNames(db, table, partKeyList);
+					for (Partition part : parts) {
+						psd = part.getSd();
+						if (psd.getLocation().contains("hdfs://" + local_clusterName)) {
+							psd.setLocation(psd.getLocation().replace(local_clusterName, remote_clusterName));
+							part.setSd(psd);
+							lparts.add(part);
+						}
+					}
 				} else {
 					for (String ltableString : ltableList) {
+						ArrayList<String> partKeyList = new ArrayList<String>();
 						Table ltb = lmsc.getTable(db, ltableString);
 						lsd = ltb.getSd();
 						if (lsd.getLocation().contains("hdfs://" + local_clusterName)) {
@@ -274,8 +295,22 @@ public class HiveMetaLoad {
 							ltb.setSd(lsd);
 						}
 						ltables.add(ltb);
+						List<FieldSchema> partKeys = ltb.getPartitionKeys();
+						for (FieldSchema partKey : partKeys) {
+							partKeyList.add(partKey.getName());
+						}
+						List<Partition> parts = lmsc.getPartitionsByNames(db, ltableString, partKeyList);
+						for (Partition part : parts) {
+							psd = part.getSd();
+							if (psd.getLocation().contains("hdfs://" + local_clusterName)) {
+								psd.setLocation(psd.getLocation().replace(local_clusterName, remote_clusterName));
+								part.setSd(psd);
+								lparts.add(part);
+							}
+						}
 					}
 				}
+
 			}
 		} catch (NoSuchObjectException e) {
 			// TODO Auto-generated catch block
@@ -288,11 +323,15 @@ public class HiveMetaLoad {
 		if (dumpJson) {
 			Gson gsonDb = new Gson();
 			Gson gsonTb = new Gson();
+			Gson gsonPart = new Gson();
 
-			String tbString = gsonTb.toJson(ldatabases);
-			String dbString = gsonDb.toJson(ltables);
+			String tbString = gsonTb.toJson(ltables);
+			String dbString = gsonDb.toJson(ldatabases);
+			String partString = gsonPart.toJson(lparts);
+
 			jsonWriter("/tmp/db.json", dbString);
 			jsonWriter("/tmp/tb.json", tbString);
+			jsonWriter("/tmp/parts.json", partString);
 
 		} else {
 			try {
@@ -319,6 +358,22 @@ public class HiveMetaLoad {
 						} catch (AlreadyExistsException e) {
 							System.out.println(
 									"table: " + ltable.getDbName() + "." + ltable.getTableName() + " already exists");
+						} catch (InvalidObjectException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						} catch (TException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+					}
+				}
+				if (!lparts.isEmpty()) {
+					for (Partition lpart : lparts) {
+						try {
+							rmsc.add_partition(lpart);
+						} catch (AlreadyExistsException e) {
+							System.out.println("table: " + lpart.getDbName() + "." + lpart.getTableName()
+									+ " partition=" + lpart.toString() + " already exists");
 						} catch (InvalidObjectException e) {
 							// TODO Auto-generated catch block
 							e.printStackTrace();

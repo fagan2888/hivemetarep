@@ -1,8 +1,11 @@
 package org.senia.hive;
 
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
+import java.io.FileReader;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
@@ -12,6 +15,7 @@ import java.util.List;
 
 import org.apache.commons.cli.CommandLine;
 import org.apache.commons.cli.CommandLineParser;
+import org.apache.commons.cli.HelpFormatter;
 import org.apache.commons.cli.Options;
 import org.apache.commons.cli.ParseException;
 import org.apache.hadoop.conf.Configuration;
@@ -19,12 +23,9 @@ import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.AlreadyExistsException;
 import org.apache.hadoop.hive.metastore.api.Database;
-import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.InvalidObjectException;
 import org.apache.hadoop.hive.metastore.api.MetaException;
-import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Partition;
-import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.GenericOptionsParser;
@@ -38,7 +39,7 @@ public class HiveMetaLoad {
 	public static HiveConf remoteHConf;
 	static String keytab = null;
 	static String keytabupn = null;
-	static boolean setKrb = true;
+	static boolean setKrb = false;
 
 	static boolean alldbs = false;
 	static String db;
@@ -51,7 +52,11 @@ public class HiveMetaLoad {
 	static boolean remoteMsSpn = false;
 	static boolean remoteClusterName = false;
 	static boolean localClusterName = false;
-	static boolean dumpJson = false;
+	static boolean exportJson = false;
+	static boolean importJson = false;
+	static boolean syncMeta = false;
+	static String importJsonFile;
+
 	static String remote_clusterName;
 	static String local_clusterName;
 
@@ -75,16 +80,22 @@ public class HiveMetaLoad {
 		}
 
 		options = new Options();
+		options.addOption("export", false, "export as json file");
+		options.addOption("import", true, "import json file --import hivemeta.json");
+		options.addOption("sync", false, "sync cluster a to b");
 		options.addOption("alldbs", false, "replicate all DBs and Tables --alldbs");
 		options.addOption("db", true, "DB Name --db (database name)");
 		options.addOption("table", true, "Table Name --table (table name)");
-		options.addOption("remote_ms_uri", true, "Remote Metastore Hostname --remote_ms_uri (remote uri)");
+		options.addOption("remote_ms_uri", true,
+				"(Sync Operation Only) Remote Metastore Hostname --remote_ms_uri (remote uri)");
 		options.addOption("remote_ms_spn", true,
-				"Remote Metastore Service Principal --remote_ms_spn (remote host service principal)");
-		options.addOption("remote_ms_sasl", false, "Remote Metastore SASL Enabled --remote_mshost_sasl");
-		options.addOption("remote_cluster_name", true, "Remote cluster Name --remote_cluster_name (tech)");
-		options.addOption("local_cluster_name", true, "Local cluster Name --local_cluster_name (unit)");
-		options.addOption("dump_json", false, "Dump the output to JSON");
+				"(Sync Operation Only) Remote Metastore Service Principal --remote_ms_spn (remote host service principal)");
+		options.addOption("remote_ms_sasl", false,
+				"(Sync Operation Only) Remote Metastore SASL Enabled --remote_mshost_sasl");
+		options.addOption("remote_cluster_name", true,
+				"(Sync Operation Only) Remote cluster Name --remote_cluster_name (tech)");
+		options.addOption("local_cluster_name", true,
+				"(Sync OperationOnly ) Local cluster Name --local_cluster_name (unit)");
 		options.addOption("krb_keytab", true,
 				"Keytab File to Connect to Hive Metastores --krb_keytab $HOME/S00000.keytab");
 		options.addOption("krb_upn", true,
@@ -106,10 +117,15 @@ public class HiveMetaLoad {
 			remoteMs = true;
 			remote_ms_uri = cmd.getOptionValue("remote_ms_uri");
 		}
+
 		if (cmd.hasOption("remote_ms_spn")) {
+			if (!(cmd.hasOption("remote_ms_sasl"))) {
+				remote_ms_sasl = true;
+			}
 			remoteMsSpn = true;
 			remote_ms_spn = cmd.getOptionValue("remote_ms_spn");
 		}
+		// Used for SyncOps
 		if (cmd.hasOption("remote_cluster_name")) {
 			remoteClusterName = true;
 			remote_clusterName = cmd.getOptionValue("remote_cluster_name");
@@ -118,14 +134,7 @@ public class HiveMetaLoad {
 			localClusterName = true;
 			local_clusterName = cmd.getOptionValue("local_cluster_name");
 		}
-		if (cmd.hasOption("dump_json")) {
-			dumpJson = true;
-		}
 
-		if (cmd.hasOption("remote_ms_spn")) {
-			remoteMsSpn = true;
-			remote_ms_spn = cmd.getOptionValue("remote_ms_spn");
-		}
 		if (cmd.hasOption("alldbs")) {
 			alldbs = true;
 		}
@@ -133,16 +142,31 @@ public class HiveMetaLoad {
 			singleDb = true;
 			db = cmd.getOptionValue("db");
 		}
-		if (cmd.hasOption("table")) {
+		if (cmd.hasOption("table") && cmd.hasOption("db")) {
+			if (!(cmd.hasOption("db"))) {
+				singleDb = true;
+				db = "default";
+			}
 			singleTb = true;
 			table = cmd.getOptionValue("table");
 		}
-
-		if (cmd.hasOption("db")) {
-			db = cmd.getOptionValue("db");
-		}
-		if (cmd.hasOption("table")) {
-			table = cmd.getOptionValue("table");
+		
+		if (cmd.hasOption("export")) {
+			exportJson = true;
+		} else if (cmd.hasOption("sync")) {
+			syncMeta = true;
+			if (!remoteMs) {
+				System.out.println("!!Remote Metastore Not Set!!");
+				missingParams();
+				System.exit(1);
+			}
+		} else if (cmd.hasOption("import")) {
+			importJson = true;
+			importJsonFile = cmd.getOptionValue("import");
+		} else {
+			System.out.println("Not Sync, Import or Export");
+			missingParams();
+			System.exit(1);
 		}
 
 		if (cmd.hasOption("krb_keytab") && cmd.hasOption("krb_upn")) {
@@ -152,29 +176,25 @@ public class HiveMetaLoad {
 			File keytabFile = new File(keytab);
 			if (keytabFile.exists()) {
 				if (!(keytabFile.canRead())) {
-					System.out.println("Keytab  exists but cannot read it - exiting");
+					System.out.println("Keytab exists but cannot read it - exiting");
+					missingParams();
 					System.exit(1);
 				}
 			} else {
 				System.out.println("Keytab doesn't exist  - exiting");
+				missingParams();
 				System.exit(1);
 			}
 		}
 
 		if (cmd.hasOption("help")) {
+			missingParams();
 			System.exit(0);
 		}
 
-		localHConf = new HiveConf();
-		remoteHConf = localHConf;
-		if (remoteMs) {
-			remoteHConf.set("hive.metastore.uris", remote_ms_uri);
-			if (remote_ms_sasl) {
-				remoteHConf.setBoolean("hive.metastore.sasl.enabled", true);
-			}
-			if (remoteMsSpn) {
-				remoteHConf.set("hive.metastore.kerberos.principal", remote_ms_spn);
-			}
+		if (!alldbs && !singleDb) {
+			missingParams();
+			System.exit(0);
 		}
 
 		UserGroupInformation.setConfiguration(conf);
@@ -196,7 +216,12 @@ public class HiveMetaLoad {
 			try {
 				ugi.doAs(new PrivilegedExceptionAction<Void>() {
 					public Void run() throws Exception {
-						syncOp();
+						if (exportJson || syncMeta) {
+							syncOrExportOp();
+						}
+						if (importJson) {
+							importOp();
+						}
 						return null;
 					}
 				});
@@ -208,181 +233,151 @@ public class HiveMetaLoad {
 				e.printStackTrace();
 			}
 		} else {
-			syncOp();
+			if (exportJson || syncMeta) {
+				syncOrExportOp();
+			}
+			if (importJson) {
+				importOp();
+			}
 		}
 
 	}
 
-	public static void syncOp() {
+	public static void importOp() {
+		try {
+			BufferedReader bufferedReader = new BufferedReader(new FileReader(importJsonFile));
+			Gson gson = new Gson();
+			HiveMetaData hmd = gson.fromJson(bufferedReader, HiveMetaData.class);
+			HiveMetaStoreClient lmsc = null;
+			try {
+				lmsc = new HiveMetaStoreClient(localHConf);
+			} catch (MetaException e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
+			syncImportOp(hmd, lmsc);
+
+		} catch (FileNotFoundException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
+	}
+
+	public static void syncOrExportOp() {
+		HiveMetaData hmd = new HiveMetaData();
 		List<Database> ldatabases = new ArrayList<Database>();
 		List<Table> ltables = new ArrayList<Table>();
 		List<Partition> lparts = new ArrayList<Partition>();
+		List<String> ltableList;
+		List<String> localDbs;
 
+		HiveMetaStoreClient lmsc;
 		try {
-			HiveMetaStoreClient lmsc = new HiveMetaStoreClient(localHConf);
+			lmsc = new HiveMetaStoreClient(localHConf);
+			GetHiveObjects gho = new GetHiveObjects(lmsc);
 
 			if (alldbs) {
-				List<String> ltableList;
-				List<String> localDbs = lmsc.getAllDatabases();
-				StorageDescriptor lsd = null;
+				localDbs = gho.getDatabases();
 				for (String localDbStr : localDbs) {
 					try {
-						Database ldb = lmsc.getDatabase(localDbStr);
-						if (ldb.getLocationUri().contains("hdfs://" + local_clusterName)) {
-							ldb.setLocationUri(ldb.getLocationUri().replace(local_clusterName, remote_clusterName));
-						}
+						Database ldb = gho.getDatabase(localDbStr);
+						ldb.setLocationUri(
+								gho.replacePath(gho.getLocationUri(ldb), local_clusterName, remote_clusterName));
 						ldatabases.add(ldb);
-						ltableList = lmsc.getAllTables(localDbStr);
-
+						ltableList = gho.getAllTables(localDbStr);
 						for (String ltableString : ltableList) {
-							Table ltb = lmsc.getTable(localDbStr, ltableString);
-							lsd = ltb.getSd();
-							if (lsd.getLocation().contains("hdfs://" + local_clusterName)) {
-								lsd.setLocation(lsd.getLocation().replace(local_clusterName, remote_clusterName));
-								ltb.setSd(lsd);
-							}
+							Table ltb = gho.getTable(localDbStr, ltableString);
+							ltb.setSd(gho.replacePath(gho.getSd(ltb), local_clusterName, remote_clusterName));
 							ltables.add(ltb);
+							List<String> partList = gho.getPartitionKeys(ltb);
+							List<Partition> parts = gho.getPartitionsByName(localDbStr, ltableString, partList);
+							for (Partition part : parts) {
+								part.setSd(gho.replacePath(gho.getSd(part), local_clusterName, remote_clusterName));
+								lparts.add(part);
+							}
 						}
-					} catch (NoSuchObjectException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
 					} catch (TException e) {
 						// TODO Auto-generated catch block
 						e.printStackTrace();
 					}
 				}
+				hmd.setDatabases(ldatabases);
+				hmd.setTables(ltables);
+				hmd.setPartitions(lparts);
 			}
 			if ((!alldbs) && (singleDb)) {
-				List<String> ltableList;
-				Database ldb = lmsc.getDatabase(db);
-				StorageDescriptor lsd = null;
-				StorageDescriptor psd = null;
-
-				if (ldb.getLocationUri().contains("hdfs://" + local_clusterName)) {
-					ldb.setLocationUri(ldb.getLocationUri().replace(local_clusterName, remote_clusterName));
-				}
-				ldatabases.add(ldb);
-				ltableList = lmsc.getAllTables(db);
-				if (singleTb) {
-					ArrayList<String> partKeyList = new ArrayList<String>();
-					Table ltb = lmsc.getTable(db, table);
-					lsd = ltb.getSd();
-					if (lsd.getLocation().contains("hdfs://" + local_clusterName)) {
-						lsd.setLocation(lsd.getLocation().replace(local_clusterName, remote_clusterName));
-						ltb.setSd(lsd);
-					}
-					ltables.add(ltb);
-					List<FieldSchema> partKeys = ltb.getPartitionKeys();
-					for (FieldSchema partKey : partKeys) {
-						partKeyList.add(partKey.getName());
-					}
-					List<Partition> parts = lmsc.getPartitionsByNames(db, table, partKeyList);
-					for (Partition part : parts) {
-						psd = part.getSd();
-						if (psd.getLocation().contains("hdfs://" + local_clusterName)) {
-							psd.setLocation(psd.getLocation().replace(local_clusterName, remote_clusterName));
-							part.setSd(psd);
+				String localDbStr = db;
+				try {
+					Database ldb = gho.getDatabase(localDbStr);
+					ldb.setLocationUri(gho.replacePath(gho.getLocationUri(ldb), local_clusterName, remote_clusterName));
+					ldatabases.add(ldb);
+					ltableList = gho.getAllTables(localDbStr);
+					for (String ltableString : ltableList) {
+						Table ltb = gho.getTable(localDbStr, ltableString);
+						ltb.setSd(gho.replacePath(gho.getSd(ltb), local_clusterName, remote_clusterName));
+						ltables.add(ltb);
+						List<String> partList = gho.getPartitionKeys(ltb);
+						List<Partition> parts = gho.getPartitionsByName(localDbStr, ltableString, partList);
+						for (Partition part : parts) {
+							part.setSd(gho.replacePath(gho.getSd(part), local_clusterName, remote_clusterName));
 							lparts.add(part);
 						}
 					}
-				} else {
-					for (String ltableString : ltableList) {
-						ArrayList<String> partKeyList = new ArrayList<String>();
-						Table ltb = lmsc.getTable(db, ltableString);
-						lsd = ltb.getSd();
-						if (lsd.getLocation().contains("hdfs://" + local_clusterName)) {
-							lsd.setLocation(lsd.getLocation().replace(local_clusterName, remote_clusterName));
-							ltb.setSd(lsd);
-						}
-						ltables.add(ltb);
-						List<FieldSchema> partKeys = ltb.getPartitionKeys();
-						for (FieldSchema partKey : partKeys) {
-							partKeyList.add(partKey.getName());
-						}
-						List<Partition> parts = lmsc.getPartitionsByNames(db, ltableString, partKeyList);
-						for (Partition part : parts) {
-							psd = part.getSd();
-							if (psd.getLocation().contains("hdfs://" + local_clusterName)) {
-								psd.setLocation(psd.getLocation().replace(local_clusterName, remote_clusterName));
-								part.setSd(psd);
-								lparts.add(part);
-							}
-						}
-					}
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+				hmd.setDatabases(ldatabases);
+				hmd.setTables(ltables);
+				hmd.setPartitions(lparts);
+			} else {
+				String localDbStr = db;
+				String ltableString = table;
+				Database ldb = gho.getDatabase(localDbStr);
+				ldb.setLocationUri(gho.replacePath(gho.getLocationUri(ldb), local_clusterName, remote_clusterName));
+				ldatabases.add(ldb);
+				Table ltb = gho.getTable(localDbStr, ltableString);
+				ltb.setSd(gho.replacePath(gho.getSd(ltb), local_clusterName, remote_clusterName));
+				ltables.add(ltb);
+				List<String> partList = gho.getPartitionKeys(ltb);
+				List<Partition> parts = gho.getPartitionsByName(localDbStr, ltableString, partList);
+				for (Partition part : parts) {
+					part.setSd(gho.replacePath(gho.getSd(part), local_clusterName, remote_clusterName));
+					lparts.add(part);
 				}
 
+				hmd.setDatabases(ldatabases);
+				hmd.setTables(ltables);
+				hmd.setPartitions(lparts);
 			}
-		} catch (NoSuchObjectException e) {
+		} catch (MetaException e1) {
 			// TODO Auto-generated catch block
-			e.printStackTrace();
-		} catch (TException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+			e1.printStackTrace();
 		}
 
-		if (dumpJson) {
-			Gson gsonDb = new Gson();
-			Gson gsonTb = new Gson();
-			Gson gsonPart = new Gson();
+		if (exportJson) {
+			Gson gsonOutput = new Gson();
 
-			String tbString = gsonTb.toJson(ltables);
-			String dbString = gsonDb.toJson(ldatabases);
-			String partString = gsonPart.toJson(lparts);
+			String jsonString = gsonOutput.toJson(hmd);
 
-			jsonWriter("/tmp/db.json", dbString);
-			jsonWriter("/tmp/tb.json", tbString);
-			jsonWriter("/tmp/parts.json", partString);
+			jsonWriter("/tmp/hivemeta.json", jsonString);
 
-		} else {
+		} else if (syncMeta) {
 			try {
+
+				remoteHConf = new HiveConf();
+				if (remoteMs) {
+					remoteHConf.set("hive.metastore.uris", remote_ms_uri);
+					if (remote_ms_sasl) {
+						remoteHConf.setBoolean("hive.metastore.sasl.enabled", true);
+					}
+					if (remoteMsSpn) {
+						remoteHConf.set("hive.metastore.kerberos.principal", remote_ms_spn);
+					}
+				}
 				HiveMetaStoreClient rmsc = new HiveMetaStoreClient(remoteHConf);
-				if (!ldatabases.isEmpty()) {
-					for (Database ldatabase : ldatabases) {
-						try {
-							rmsc.createDatabase(ldatabase);
-						} catch (AlreadyExistsException e) {
-							System.out.println("database: " + ldatabase.getName() + " already exists");
-						} catch (InvalidObjectException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						} catch (TException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						}
-					}
-				}
-				if (!ltables.isEmpty()) {
-					for (Table ltable : ltables) {
-						try {
-							rmsc.createTable(ltable);
-						} catch (AlreadyExistsException e) {
-							System.out.println(
-									"table: " + ltable.getDbName() + "." + ltable.getTableName() + " already exists");
-						} catch (InvalidObjectException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						} catch (TException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						}
-					}
-				}
-				if (!lparts.isEmpty()) {
-					for (Partition lpart : lparts) {
-						try {
-							rmsc.add_partition(lpart);
-						} catch (AlreadyExistsException e) {
-							System.out.println("table: " + lpart.getDbName() + "." + lpart.getTableName()
-									+ " partition=" + lpart.toString() + " already exists");
-						} catch (InvalidObjectException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						} catch (TException e) {
-							// TODO Auto-generated catch block
-							e.printStackTrace();
-						}
-					}
-				}
+				syncImportOp(hmd, rmsc);
 			} catch (MetaException e) {
 				// TODO Auto-generated catch block
 				e.printStackTrace();
@@ -407,6 +402,67 @@ public class HiveMetaLoad {
 			} catch (Exception ex) {
 			}
 		}
+	}
+
+	public static void syncImportOp(HiveMetaData hmd, HiveMetaStoreClient msc) {
+		List<Database> ldatabases = hmd.getDatabases();
+		List<Table> ltables = hmd.getTables();
+		List<Partition> lparts = hmd.getPartitions();
+
+		if (!ldatabases.isEmpty()) {
+			for (Database ldatabase : ldatabases) {
+				try {
+					msc.createDatabase(ldatabase);
+				} catch (AlreadyExistsException e) {
+					System.out.println("database: " + ldatabase.getName() + " already exists");
+				} catch (InvalidObjectException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+		}
+		if (!ltables.isEmpty()) {
+			for (Table ltable : ltables) {
+				try {
+					msc.createTable(ltable);
+				} catch (AlreadyExistsException e) {
+					System.out
+							.println("table: " + ltable.getDbName() + "." + ltable.getTableName() + " already exists");
+				} catch (InvalidObjectException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+		}
+		if (!lparts.isEmpty()) {
+			for (Partition lpart : lparts) {
+				try {
+					msc.add_partition(lpart);
+				} catch (AlreadyExistsException e) {
+					System.out.println("table: " + lpart.getDbName() + "." + lpart.getTableName() + " partition="
+							+ lpart.toString() + " already exists");
+				} catch (InvalidObjectException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				} catch (TException e) {
+					// TODO Auto-generated catch block
+					e.printStackTrace();
+				}
+			}
+		}
+	}
+
+	private static void missingParams() {
+		String header = "HiveMetaLoad";
+		String footer = "\nPlease report issues";
+		HelpFormatter formatter = new HelpFormatter();
+		formatter.printHelp("get", header, options, footer, true);
 	}
 
 }

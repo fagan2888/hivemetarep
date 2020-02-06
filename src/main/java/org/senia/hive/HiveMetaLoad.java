@@ -11,6 +11,7 @@ import java.io.OutputStreamWriter;
 import java.io.Writer;
 import java.security.PrivilegedExceptionAction;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import org.apache.commons.cli.CommandLine;
@@ -29,7 +30,11 @@ import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.hadoop.security.UserGroupInformation;
 import org.apache.hadoop.util.GenericOptionsParser;
+import org.apache.log4j.Level;
+import org.apache.log4j.LogManager;
 import org.apache.thrift.TException;
+import org.senia.hive.threads.DatabaseThread;
+import org.senia.hive.threads.TableThread;
 
 import com.google.gson.Gson;
 
@@ -40,13 +45,14 @@ public class HiveMetaLoad {
 	static String keytab = null;
 	static String keytabupn = null;
 	static boolean setKrb = false;
+	private final static Object lock = new Object();
 
 	static boolean alldbs = false;
-	static String db;
+	static String db = "";
 	static boolean singleDb = false;
 	static boolean singleTb = false;
 
-	static String table;
+	static String table = "";
 	static String remote_ms_uri;
 	static boolean remoteMs = false;
 	static boolean remoteMsSpn = false;
@@ -56,6 +62,9 @@ public class HiveMetaLoad {
 	static boolean importJson = false;
 	static boolean syncMeta = false;
 	static String importJsonFile;
+	static boolean dbExportComplete = false;
+	static boolean partExportComplete = false;
+	static boolean tableExportComplete = false;
 
 	static String remote_clusterName;
 	static String local_clusterName;
@@ -150,7 +159,7 @@ public class HiveMetaLoad {
 			singleTb = true;
 			table = cmd.getOptionValue("table");
 		}
-		
+
 		if (cmd.hasOption("export")) {
 			exportJson = true;
 		} else if (cmd.hasOption("sync")) {
@@ -196,6 +205,8 @@ public class HiveMetaLoad {
 			missingParams();
 			System.exit(0);
 		}
+		LogManager.getRootLogger().setLevel(Level.WARN);
+
 
 		UserGroupInformation.setConfiguration(conf);
 
@@ -213,6 +224,7 @@ public class HiveMetaLoad {
 				System.out.println("Exception Getting Credentials Exiting!");
 				System.exit(1);
 			}
+			HiveMetaDataStore.getInstance();
 			try {
 				ugi.doAs(new PrivilegedExceptionAction<Void>() {
 					public Void run() throws Exception {
@@ -265,12 +277,24 @@ public class HiveMetaLoad {
 	}
 
 	public static void syncOrExportOp() {
+
 		HiveMetaData hmd = new HiveMetaData();
-		List<Database> ldatabases = new ArrayList<Database>();
-		List<Table> ltables = new ArrayList<Table>();
-		List<Partition> lparts = new ArrayList<Partition>();
+		// List<Database> ldatabases = new ArrayList<Database>();
+		List<Database> ldatabases = Collections.synchronizedList(new ArrayList<Database>());
+		// List<Table> ltables = new ArrayList<Table>();
+		List<Table> ltables = Collections.synchronizedList(new ArrayList<Table>());
+
+		// List<Partition> lparts = new ArrayList<Partition>();
+		List<Partition> lparts = Collections.synchronizedList(new ArrayList<Partition>());
+
 		List<String> ltableList;
 		List<String> localDbs;
+		ThreadGroup hsmtg = new ThreadGroup("HiveMetaStoreExportThreadGroup");
+		ThreadGroup tabletg = new ThreadGroup(hsmtg, "TableExportThreadGroup");
+		ThreadGroup dbtg = new ThreadGroup(hsmtg, "DatabaseExportThreadGroup");
+		ThreadGroup parttg = new ThreadGroup(hsmtg, "PartitionExportThreadGroup");
+
+
 
 		HiveMetaStoreClient lmsc;
 		try {
@@ -279,48 +303,63 @@ public class HiveMetaLoad {
 
 			if (alldbs) {
 				localDbs = gho.getDatabases();
+				DatabaseThread dbThread = new DatabaseThread(dbtg, "DatabaseExportThread", localDbs, localHConf,
+						syncMeta, local_clusterName, remote_clusterName);
+				dbThread.start();
+
 				for (String localDbStr : localDbs) {
-					try {
-						Database ldb = gho.getDatabase(localDbStr);
-						ldb.setLocationUri(
-								gho.replacePath(gho.getLocationUri(ldb), local_clusterName, remote_clusterName));
-						ldatabases.add(ldb);
-						ltableList = gho.getAllTables(localDbStr);
-						for (String ltableString : ltableList) {
-							Table ltb = gho.getTable(localDbStr, ltableString);
-							ltb.setSd(gho.replacePath(gho.getSd(ltb), local_clusterName, remote_clusterName));
-							ltables.add(ltb);
-							List<String> partList = gho.getPartitionKeys(ltb);
-							List<Partition> parts = gho.getPartitionsByName(localDbStr, ltableString, partList);
-							for (Partition part : parts) {
-								part.setSd(gho.replacePath(gho.getSd(part), local_clusterName, remote_clusterName));
-								lparts.add(part);
-							}
-						}
-					} catch (TException e) {
-						// TODO Auto-generated catch block
-						e.printStackTrace();
-					}
+					ltableList = gho.getAllTables(localDbStr);
+					TableThread tThread = new TableThread(parttg, tabletg, localDbStr, ltableList, localHConf, syncMeta,
+							local_clusterName, remote_clusterName);
+					tThread.start();
+
 				}
-				hmd.setDatabases(ldatabases);
-				hmd.setTables(ltables);
-				hmd.setPartitions(lparts);
+				while (true) {
+					synchronized (lock) {
+						System.out.println("Total Thread Count: " + hsmtg.activeCount());
+						System.out.println("Database Thread Count: " + dbtg.activeCount());
+						System.out.println("Table Thread Count: " + tabletg.activeCount());
+						System.out.println("Partition Thread Count: " + parttg.activeCount());
+						
+						if (hsmtg.activeCount() == 0) {
+							hmd.setDatabases(HiveMetaDataStore.ldatabases);
+							hmd.setTables(HiveMetaDataStore.ltables);
+							hmd.setPartitions(HiveMetaDataStore.lparts);
+							break;
+						}
+						try {
+							lock.wait(5000L);
+						} catch (InterruptedException e) {
+							// TODO Auto-generated catch block
+							e.printStackTrace();
+						}
+					}
+
+				}
+				lmsc.close();
 			}
-			if ((!alldbs) && (singleDb)) {
+			else if ((!alldbs) && (singleDb)) {
 				String localDbStr = db;
 				try {
 					Database ldb = gho.getDatabase(localDbStr);
-					ldb.setLocationUri(gho.replacePath(gho.getLocationUri(ldb), local_clusterName, remote_clusterName));
+					if (syncMeta) {
+						ldb.setLocationUri(
+								gho.replacePath(gho.getLocationUri(ldb), local_clusterName, remote_clusterName));
+					}
 					ldatabases.add(ldb);
 					ltableList = gho.getAllTables(localDbStr);
 					for (String ltableString : ltableList) {
 						Table ltb = gho.getTable(localDbStr, ltableString);
-						ltb.setSd(gho.replacePath(gho.getSd(ltb), local_clusterName, remote_clusterName));
+						if (syncMeta) {
+							ltb.setSd(gho.replacePath(gho.getSd(ltb), local_clusterName, remote_clusterName));
+						}
 						ltables.add(ltb);
 						List<String> partList = gho.getPartitionKeys(ltb);
 						List<Partition> parts = gho.getPartitionsByName(localDbStr, ltableString, partList);
 						for (Partition part : parts) {
-							part.setSd(gho.replacePath(gho.getSd(part), local_clusterName, remote_clusterName));
+							if (syncMeta) {
+								part.setSd(gho.replacePath(gho.getSd(part), local_clusterName, remote_clusterName));
+							}
 							lparts.add(part);
 						}
 					}
@@ -331,19 +370,25 @@ public class HiveMetaLoad {
 				hmd.setDatabases(ldatabases);
 				hmd.setTables(ltables);
 				hmd.setPartitions(lparts);
-			} else {
+			} else if (!db.isEmpty() && (!table.isEmpty())) {
 				String localDbStr = db;
 				String ltableString = table;
 				Database ldb = gho.getDatabase(localDbStr);
-				ldb.setLocationUri(gho.replacePath(gho.getLocationUri(ldb), local_clusterName, remote_clusterName));
+				if (syncMeta) {
+					ldb.setLocationUri(gho.replacePath(gho.getLocationUri(ldb), local_clusterName, remote_clusterName));
+				}
 				ldatabases.add(ldb);
 				Table ltb = gho.getTable(localDbStr, ltableString);
-				ltb.setSd(gho.replacePath(gho.getSd(ltb), local_clusterName, remote_clusterName));
+				if (syncMeta) {
+					ltb.setSd(gho.replacePath(gho.getSd(ltb), local_clusterName, remote_clusterName));
+				}
 				ltables.add(ltb);
 				List<String> partList = gho.getPartitionKeys(ltb);
 				List<Partition> parts = gho.getPartitionsByName(localDbStr, ltableString, partList);
 				for (Partition part : parts) {
-					part.setSd(gho.replacePath(gho.getSd(part), local_clusterName, remote_clusterName));
+					if (syncMeta) {
+						part.setSd(gho.replacePath(gho.getSd(part), local_clusterName, remote_clusterName));
+					}
 					lparts.add(part);
 				}
 
@@ -357,6 +402,7 @@ public class HiveMetaLoad {
 		}
 
 		if (exportJson) {
+			System.out.println("Outputing JSON");
 			Gson gsonOutput = new Gson();
 
 			String jsonString = gsonOutput.toJson(hmd);

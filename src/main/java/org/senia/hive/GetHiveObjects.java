@@ -7,6 +7,7 @@ import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.FieldSchema;
 import org.apache.hadoop.hive.metastore.api.MetaException;
+import org.apache.hadoop.hive.metastore.api.NoSuchObjectException;
 import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
@@ -81,13 +82,42 @@ public class GetHiveObjects {
 		return partKeyList;
 	}
 	
+	public boolean partitionExists(Table tb) {
+		List<FieldSchema> partKeys = tb.getPartitionKeys();
+		if (partKeys != null) {
+			if (!partKeys.isEmpty()) {
+				return true;
+			}
+		}
+		return false;
+
+	}
+	
+	public List<Partition> getPartitions(String dbName, String tableName) {
+		List<Partition> parts= null;
+		try {
+			parts = msc.listPartitions(dbName, tableName, (short)-1);
+		} catch (NoSuchObjectException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (MetaException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		} catch (TException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		return parts;
+
+	}
+	
 	public List<Partition> getPartitionsByName(String dbName, String tableName, List<String> partKeyList) {
-		List<Partition> parts = null;
+		List<Partition> parts = new ArrayList<Partition>();
 		try {
 			parts = msc.getPartitionsByNames(dbName, tableName, partKeyList);
 		} catch (TException e) {
 			// TODO Auto-generated catch block
-			e.printStackTrace();
+			System.out.println("No Partitions");
 		}
 		return parts;
 	}

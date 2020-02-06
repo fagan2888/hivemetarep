@@ -9,28 +9,44 @@ import org.apache.hadoop.hive.metastore.api.Database;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.Table;
+import org.apache.hadoop.hive.metastore.api.Index;
+
+import org.apache.hadoop.hive.metastore.events.AlterTableEvent;
+import org.apache.hadoop.hive.metastore.events.CreateTableEvent;
+import org.apache.hadoop.hive.metastore.events.DropTableEvent;
+import org.apache.hadoop.hive.metastore.events.CreateDatabaseEvent;
+import org.apache.hadoop.hive.metastore.events.DropDatabaseEvent;
 import org.apache.hadoop.hive.metastore.events.AddPartitionEvent;
 import org.apache.hadoop.hive.metastore.events.AlterPartitionEvent;
-import org.apache.hadoop.hive.metastore.events.AlterTableEvent;
-import org.apache.hadoop.hive.metastore.events.CreateDatabaseEvent;
-import org.apache.hadoop.hive.metastore.events.CreateTableEvent;
-import org.apache.hadoop.hive.metastore.events.DropDatabaseEvent;
 import org.apache.hadoop.hive.metastore.events.DropPartitionEvent;
-import org.apache.hadoop.hive.metastore.events.DropTableEvent;
 import org.apache.hadoop.hive.metastore.events.LoadPartitionDoneEvent;
+import org.apache.hadoop.hive.metastore.events.InsertEvent;
+import org.apache.hadoop.hive.metastore.events.AddIndexEvent;
+import org.apache.hadoop.hive.metastore.events.AlterIndexEvent;
+import org.apache.hadoop.hive.metastore.events.DropIndexEvent;
+
+
+
+import com.google.gson.Gson;
 
 public class HiveMetaRep extends MetaStoreEventListener {
 
+	//status - status of insert, true = success, false = failure
+	public Gson gson;
+	public HiveMetaMessage hmm;
+	
 	public HiveMetaRep(Configuration config) {
 		super(config);
+		gson = new Gson();
+		hmm = new HiveMetaMessage();
 		// TODO Auto-generated constructor stub
+		
 	}
 
 	public void onCreateTable(CreateTableEvent tableEvent) throws MetaException {
-
-		Table createTable = tableEvent.getTable();
-		boolean status = tableEvent.getStatus();
-
+		hmm.setCreateTable(tableEvent.getTable());
+		hmm.setStatus(tableEvent.getStatus());
+		hmm.setOpType(HiveMetaMessage.CREATE_TABLE);
 	}
 
 	/**
@@ -38,11 +54,10 @@ public class HiveMetaRep extends MetaStoreEventListener {
 	 * @throws MetaException
 	 */
 	public void onDropTable(DropTableEvent tableEvent) throws MetaException {
-
-		boolean deleteData = tableEvent.getDeleteData();
-		Table dropTable = tableEvent.getTable();
-		boolean status = tableEvent.getStatus();
-
+		hmm.setDropTable(tableEvent.getTable());
+		hmm.setStatus(tableEvent.getStatus());
+		hmm.setDeleteData(tableEvent.getDeleteData());
+		hmm.setOpType(HiveMetaMessage.DROP_TABLE);
 	}
 
 	/**
@@ -50,10 +65,10 @@ public class HiveMetaRep extends MetaStoreEventListener {
 	 * @throws MetaException
 	 */
 	public void onAlterTable(AlterTableEvent tableEvent) throws MetaException {
-		Table newTable = tableEvent.getNewTable();
-		Table oldTable = tableEvent.getOldTable();
-		boolean status = tableEvent.getStatus();
-
+		hmm.setAlterTableNew(tableEvent.getNewTable());
+		hmm.setAlterTableOld(tableEvent.getOldTable());
+		hmm.setStatus(tableEvent.getStatus());
+		hmm.setOpType(HiveMetaMessage.ALTER_TABLE);
 	}
 
 	/**
@@ -94,8 +109,9 @@ public class HiveMetaRep extends MetaStoreEventListener {
 	 * @throws MetaException
 	 */
 	public void onCreateDatabase(CreateDatabaseEvent dbEvent) throws MetaException {
-		Database createDb = dbEvent.getDatabase();
-		boolean status = dbEvent.getStatus();
+		hmm.setCreateDatabase(dbEvent.getDatabase());
+		hmm.setStatus(dbEvent.getStatus());
+		hmm.setOpType(HiveMetaMessage.CREATE_DATABASE);
 	}
 
 	/**
@@ -103,8 +119,9 @@ public class HiveMetaRep extends MetaStoreEventListener {
 	 * @throws MetaException
 	 */
 	public void onDropDatabase(DropDatabaseEvent dbEvent) throws MetaException {
-		Database dropDb = dbEvent.getDatabase();
-		boolean status = dbEvent.getStatus();
+		hmm.setDropDatabase(dbEvent.getDatabase());
+		hmm.setStatus(dbEvent.getStatus());
+		hmm.setOpType(HiveMetaMessage.DROP_DATABASE);
 	}
 
 	/**

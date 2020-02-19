@@ -1,0 +1,6 @@
+keytab=/etc/security/keytabs/hdfs.headless.keytab
+keytab_upn=hdfs-unit@UNIT.HDP.EXAMPLE.COM
+kerberos=true
+exec_hours=0,3,6,9,12,15,18,21
+hdfsOutput=true
+outputPath=/user/hdfs/hive_metastore_backup

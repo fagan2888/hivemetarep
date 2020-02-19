@@ -30,4 +30,16 @@ public class HiveMetaDataStore {
 		return instance;
 	}
 
+	public static void clearDatastore() {
+		synchronized (ldatabases) {
+			ldatabases.clear();
+		}
+		synchronized (ltables) {
+			ltables.clear();
+		}
+		synchronized (lparts) {
+			lparts.clear();
+		}
+	}
+
 }

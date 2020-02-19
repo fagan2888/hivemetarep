@@ -6,31 +6,39 @@ import org.apache.hadoop.hive.conf.HiveConf;
 import org.apache.hadoop.hive.metastore.HiveMetaStoreClient;
 import org.apache.hadoop.hive.metastore.api.MetaException;
 import org.apache.hadoop.hive.metastore.api.Partition;
-import org.senia.hive.GetHiveObjects;
+import org.senia.hive.HiveObjectHelper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.senia.hive.HiveMetaDataStore;
 
 public class PartitionThread extends Thread {
+	private static final Logger LOG = LoggerFactory.getLogger(PartitionThread.class);
+
 	HiveMetaStoreClient msc;
 	HiveConf hconf;
-	GetHiveObjects gho;
+	HiveObjectHelper gho;
+	boolean connNotEst = true;
 	boolean syncMeta;
 	String local_clusterName;
 	String remote_clusterName;
 	String localDbStr;
 	String ltableString;
 
-	public PartitionThread(ThreadGroup tg, String name, String ltableString,
-			HiveConf hconf, boolean syncMeta, String remote_clusterName, String local_clusterName) {
+	public PartitionThread(ThreadGroup tg, String name, String ltableString, HiveConf hconf, boolean syncMeta,
+			String remote_clusterName, String local_clusterName) {
 		super(tg, name + "_" + ltableString);
 		this.localDbStr = name;
 		this.ltableString = ltableString;
-		try {
-			this.msc = new HiveMetaStoreClient(hconf);
-		} catch (MetaException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
+		while (connNotEst) {
+			try {
+				this.msc = new HiveMetaStoreClient(hconf);
+				connNotEst = false;
+			} catch (Exception e) {
+				// TODO Auto-generated catch block
+				e.printStackTrace();
+			}
 		}
-		gho = new GetHiveObjects(msc);
+		gho = new HiveObjectHelper(msc);
 		this.syncMeta = syncMeta;
 		this.local_clusterName = local_clusterName;
 		this.remote_clusterName = remote_clusterName;

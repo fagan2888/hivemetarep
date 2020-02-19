@@ -25,28 +25,27 @@ import org.apache.hadoop.hive.metastore.events.AddIndexEvent;
 import org.apache.hadoop.hive.metastore.events.AlterIndexEvent;
 import org.apache.hadoop.hive.metastore.events.DropIndexEvent;
 
-
-
 import com.google.gson.Gson;
 
-public class HiveMetaRep extends MetaStoreEventListener {
+public class HiveMetaListener extends MetaStoreEventListener {
 
-	//status - status of insert, true = success, false = failure
+	// status - status of insert, true = success, false = failure
 	public Gson gson;
 	public HiveMetaMessage hmm;
-	
-	public HiveMetaRep(Configuration config) {
+
+	public HiveMetaListener(Configuration config) {
 		super(config);
 		gson = new Gson();
 		hmm = new HiveMetaMessage();
 		// TODO Auto-generated constructor stub
-		
+
 	}
 
 	public void onCreateTable(CreateTableEvent tableEvent) throws MetaException {
 		hmm.setCreateTable(tableEvent.getTable());
 		hmm.setStatus(tableEvent.getStatus());
 		hmm.setOpType(HiveMetaMessage.CREATE_TABLE);
+		System.out.println("GSS-Table Created: " + tableEvent.getTable().getTableName());
 	}
 
 	/**

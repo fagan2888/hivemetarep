@@ -21,7 +21,6 @@ public class HiveMetaMessage {
 	public final static String ALTER_INDEX = "alterIndex";
 	public final static String INSERT_INDEX = "insertIndex";
 
-	
 	public boolean status;
 	public boolean deleteData;
 	public String opType;
@@ -68,6 +67,7 @@ public class HiveMetaMessage {
 	public void setDropTable(Table dropTable) {
 		this.dropTable = dropTable;
 	}
+
 	public Table getAlterTableNew() {
 		return this.alterTableNew;
 	}
@@ -75,13 +75,14 @@ public class HiveMetaMessage {
 	public void setAlterTableNew(Table alterTableNew) {
 		this.alterTableNew = alterTableNew;
 	}
+
 	public Table getAlterTableOld() {
 		return this.alterTableOld;
 	}
 
 	public void setAlterTableOld(Table alterTableOld) {
 		this.alterTableOld = alterTableOld;
-	}		
+	}
 
 	public Table getCreateTable() {
 		return this.createTable;
@@ -98,14 +99,14 @@ public class HiveMetaMessage {
 	public void setDropDatabase(Database dropDatabase) {
 		this.dropDatabase = dropDatabase;
 	}
-	
+
 	public Database getCreateDatabase() {
 		return this.createDatabase;
 	}
 
 	public void setCreateDatabase(Database createDatabase) {
 		this.createDatabase = createDatabase;
-	}	
+	}
 
 	public Partition getPartition() {
 		return this.partition;

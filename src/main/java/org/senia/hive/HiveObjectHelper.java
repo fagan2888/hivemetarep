@@ -12,11 +12,15 @@ import org.apache.hadoop.hive.metastore.api.Partition;
 import org.apache.hadoop.hive.metastore.api.StorageDescriptor;
 import org.apache.hadoop.hive.metastore.api.Table;
 import org.apache.thrift.TException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-public class GetHiveObjects {
+public class HiveObjectHelper {
+	private static final Logger LOG = LoggerFactory.getLogger(HiveObjectHelper.class);
+
 	HiveMetaStoreClient msc;
-	
-	public GetHiveObjects(HiveMetaStoreClient msc) {
+
+	public HiveObjectHelper(HiveMetaStoreClient msc) {
 		this.msc = msc;
 	}
 
@@ -49,30 +53,33 @@ public class GetHiveObjects {
 		}
 		return ltb;
 	}
-	
+
 	public StorageDescriptor getSd(Table tb) {
 		return tb.getSd();
 	}
+
 	public StorageDescriptor getSd(Partition pt) {
 		return pt.getSd();
 	}
+
 	public String getLocationUri(Database db) {
 		return db.getLocationUri();
 	}
-	
+
 	public StorageDescriptor replacePath(StorageDescriptor sd, String localClusterName, String remoteClusterName) {
 		if (sd.getLocation().contains("hdfs://" + localClusterName)) {
 			sd.setLocation(sd.getLocation().replace(localClusterName, remoteClusterName));
 		}
 		return sd;
 	}
+
 	public String replacePath(String locationUri, String localClusterName, String remoteClusterName) {
 		if (locationUri.contains("hdfs://" + localClusterName)) {
 			locationUri = locationUri.replace(localClusterName, remoteClusterName);
 		}
 		return locationUri;
 	}
-	
+
 	public List<String> getPartitionKeys(Table tb) {
 		ArrayList<String> partKeyList = new ArrayList<String>();
 		List<FieldSchema> partKeys = tb.getPartitionKeys();
@@ -81,7 +88,7 @@ public class GetHiveObjects {
 		}
 		return partKeyList;
 	}
-	
+
 	public boolean partitionExists(Table tb) {
 		List<FieldSchema> partKeys = tb.getPartitionKeys();
 		if (partKeys != null) {
@@ -92,11 +99,11 @@ public class GetHiveObjects {
 		return false;
 
 	}
-	
+
 	public List<Partition> getPartitions(String dbName, String tableName) {
-		List<Partition> parts= null;
+		List<Partition> parts = null;
 		try {
-			parts = msc.listPartitions(dbName, tableName, (short)-1);
+			parts = msc.listPartitions(dbName, tableName, (short) -1);
 		} catch (NoSuchObjectException e) {
 			// TODO Auto-generated catch block
 			e.printStackTrace();
@@ -110,14 +117,14 @@ public class GetHiveObjects {
 		return parts;
 
 	}
-	
+
 	public List<Partition> getPartitionsByName(String dbName, String tableName, List<String> partKeyList) {
 		List<Partition> parts = new ArrayList<Partition>();
 		try {
 			parts = msc.getPartitionsByNames(dbName, tableName, partKeyList);
 		} catch (TException e) {
 			// TODO Auto-generated catch block
-			System.out.println("No Partitions");
+			LOG.info("No Partitions");
 		}
 		return parts;
 	}

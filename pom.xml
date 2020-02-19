@@ -1,16 +1,20 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>org.senia</groupId>
-  <artifactId>hivemetarep</artifactId>
-  <version>0.0.1-SNAPSHOT</version>
-  <name>hivemetarep</name>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<groupId>org.senia</groupId>
+	<artifactId>hivemetarep</artifactId>
+	<version>0.0.1-SNAPSHOT</version>
+	<name>hivemetarep</name>
 	<properties>
-		<app.home>/apps/ftp2hdfs/</app.home>
+		<app.home>/apps/hivemetarep/</app.home>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<install.user>root</install.user>
 		<java.version>1.8</java.version>
 		<hadoop.version>2.7.1</hadoop.version>
 		<hive.version>1.2.1</hive.version>
+		<commons.daemon.version>1.1.0</commons.daemon.version>
+
 	</properties>
 
 	<profiles>
@@ -66,7 +70,7 @@
 									<directory>${app.home}/lib</directory>
 									<dependency>
 										<includes>
-											<include>commons-net:commons-net</include>
+											<include>commons-daemon:commons-daemon</include>
 										</includes>
 										<excludes>
 											<exclude>log4j:log4j</exclude>
@@ -81,32 +85,26 @@
 									<groupname>${install.user}</groupname>
 									<sources>
 										<source>
-											<location>${project.basedir}/src/main/resources/bin/ftp2hdfs</location>
+											<location>${project.basedir}/src/main/resources/hiveload.sh</location>
 										</source>
+										<source>
+											<location>${project.basedir}/src/main/resources/hiveserver.sh</location>
+										</source>										
 									</sources>
 								</mapping>
 								<mapping>
-									<directory>${app.home}</directory>
+									<directory>${app.home}/conf</directory>
 									<directoryIncluded>true</directoryIncluded>
 									<filemode>755</filemode>
 									<username>${install.user}</username>
 									<groupname>${install.user}</groupname>
 									<sources>
 										<source>
-											<location>${project.basedir}/src/main/resources/bin/</location>
+											<location>${project.basedir}/src/main/resources/config.props</location>
 										</source>
-									</sources>
-								</mapping>
-								<mapping>
-									<directory>${app.home}/oozie</directory>
-									<directoryIncluded>true</directoryIncluded>
-									<filemode>755</filemode>
-									<username>${install.user}</username>
-									<groupname>${install.user}</groupname>
-									<sources>
 										<source>
-											<location>${project.basedir}/src/main/resources/oozie/</location>
-										</source>
+											<location>${project.basedir}/src/main/resources/log4j.properties</location>
+										</source>										
 									</sources>
 								</mapping>
 							</mappings>
@@ -152,5 +150,10 @@
 			<artifactId>hadoop-client</artifactId>
 			<version>${hadoop.version}</version>
 		</dependency>
-	</dependencies>  
+		<dependency>
+			<groupId>commons-daemon</groupId>
+			<artifactId>commons-daemon</artifactId>
+			<version>${commons.daemon.version}</version>
+		</dependency>
+	</dependencies>
 </project>
